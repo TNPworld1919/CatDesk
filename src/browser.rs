@@ -171,12 +171,50 @@ fn resolve_binary(binary: &str) -> Option<PathBuf> {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    if let Some(candidate) = resolve_windows_application_binary(binary) {
+        return Some(candidate);
+    }
+
     #[cfg(target_os = "macos")]
     if let Some(candidate) = resolve_macos_application_binary(binary) {
         return Some(candidate);
     }
 
     None
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_windows_application_binary(binary: &str) -> Option<PathBuf> {
+    let roots = ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"]
+        .into_iter()
+        .filter_map(|name| std::env::var_os(name).map(PathBuf::from));
+
+    find_existing_windows_application_binary(binary, roots)
+}
+
+#[cfg(target_os = "windows")]
+fn find_existing_windows_application_binary<I>(binary: &str, roots: I) -> Option<PathBuf>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    let relative = windows_application_binary_relative_path(binary)?;
+    roots
+        .into_iter()
+        .map(|root| root.join(relative))
+        .find(|candidate| candidate.is_file())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_application_binary_relative_path(binary: &str) -> Option<&'static str> {
+    match binary {
+        "google-chrome-stable" | "google-chrome" => Some(r"Google\Chrome\Application\chrome.exe"),
+        "microsoft-edge-stable" | "microsoft-edge" => {
+            Some(r"Microsoft\Edge\Application\msedge.exe")
+        }
+        "brave-browser" => Some(r"BraveSoftware\Brave-Browser\Application\brave.exe"),
+        _ => None,
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -344,12 +382,9 @@ fn command_line_starts_with_executable(command_line: &str, executable: &str) -> 
     if command_line == executable {
         return true;
     }
-    command_line
-        .strip_prefix(executable)
-        .is_some_and(|rest| {
-            rest.chars().next().is_some_and(char::is_whitespace)
-                && rest.trim_start().starts_with('-')
-        })
+    command_line.strip_prefix(executable).is_some_and(|rest| {
+        rest.chars().next().is_some_and(char::is_whitespace) && rest.trim_start().starts_with('-')
+    })
 }
 
 fn command_matches_binary(arg: &str, binary: &str) -> bool {
@@ -455,6 +490,54 @@ pub fn format_active_remote_debug_names(browsers: &[DetectedBrowser]) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_application_paths_cover_supported_chromium_browsers() {
+        assert_eq!(
+            windows_application_binary_relative_path("google-chrome"),
+            Some(r"Google\Chrome\Application\chrome.exe")
+        );
+        assert_eq!(
+            windows_application_binary_relative_path("google-chrome-stable"),
+            Some(r"Google\Chrome\Application\chrome.exe")
+        );
+        assert_eq!(
+            windows_application_binary_relative_path("microsoft-edge"),
+            Some(r"Microsoft\Edge\Application\msedge.exe")
+        );
+        assert_eq!(
+            windows_application_binary_relative_path("microsoft-edge-stable"),
+            Some(r"Microsoft\Edge\Application\msedge.exe")
+        );
+        assert_eq!(
+            windows_application_binary_relative_path("brave-browser"),
+            Some(r"BraveSoftware\Brave-Browser\Application\brave.exe")
+        );
+        assert_eq!(windows_application_binary_relative_path("firefox"), None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_application_binary_resolves_an_existing_standard_path() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock is before Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("catdesk-browser-detection-{unique}"));
+        let executable = root.join(r"BraveSoftware\Brave-Browser\Application\brave.exe");
+
+        std::fs::create_dir_all(executable.parent().expect("executable has a parent"))
+            .expect("create browser directory");
+        std::fs::File::create(&executable).expect("create browser executable");
+
+        assert_eq!(
+            find_existing_windows_application_binary("brave-browser", [root.clone()]),
+            Some(executable)
+        );
+
+        std::fs::remove_dir_all(root).expect("remove temporary browser directory");
+    }
 
     #[cfg(target_os = "macos")]
     #[test]
