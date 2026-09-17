@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 jobs:
-  windows:
-    name: Test and build on Windows
+  test:
+    name: Test on Windows
     runs-on: windows-2022
 
     steps:
@@ -22,9 +22,24 @@ jobs:
         shell: pwsh
         run: rustup toolchain install stable --profile minimal
 
-      - name: Run tests
+      - name: Run browser detection tests
+        shell: pwsh
+        run: cargo +stable test browser::tests --locked
+
+      - name: Run full test suite
         shell: pwsh
         run: cargo +stable test --locked
+
+  build:
+    name: Build release on Windows
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        shell: pwsh
+        run: rustup toolchain install stable --profile minimal
 
       - name: Build release binary
         shell: pwsh
